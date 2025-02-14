@@ -2,67 +2,64 @@
 - hosts: all
   become: true
   vars:
-    sonarqube_password: your_strong_password  # **REPLACE THIS WITH A STRONG PASSWORD**
+    sonarqube_password: your_strong_password  # **REPLACE WITH A STRONG PASSWORD!**
+    sonarqube_version: 9.9.0.59072 # Example version - update as needed
+    sonarqube_zip_url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-{{ sonarqube_version }}-linux.zip"  # Update URL
 
   tasks:
     - name: Update package lists
       apt: update_cache=yes
 
     - name: Install Java and PostgreSQL
-      apt: name={{ item }} state=present
+      apt: name="{{ item }}" state=present
       loop:
-        - openjdk-17-jdk  # Or the required Java version
+        - openjdk-17-jdk  # Or your required Java version
         - postgresql
         - postgresql-contrib
 
-    - name: Create SonarQube database and user
-      postgresql_user:
-        user: sonar
-        password: "{{ sonarqube_password }}"
-        privileges: ALL
-      postgresql_db:
-        name: sonar
-        owner: sonar
+    - name: Create PostgreSQL user and database for SonarQube
+      block: # Use a block for related tasks
+        - postgresql_user:
+            user: sonar
+            password: "{{ sonarqube_password }}"
+            privileges: ALL
+        - postgresql_db:
+            name: sonar
+            owner: sonar
 
-    - name: Download SonarQube (manual download required)
-      debug:
-        msg: "Please download SonarQube from https://www.sonarqube.org/downloads/ and place the ZIP file in /tmp/"
+    - name: Download SonarQube ZIP
+      get_url:
+        url: "{{ sonarqube_zip_url }}"
+        dest: /tmp/
+        checksum: "sha256:your_checksum_here" # **REPLACE WITH THE ACTUAL CHECKSUM!**
 
-    - name: Check if SonarQube zip file exists
-      stat:
-        path: /tmp/sonarqube-*.zip
-      register: sonarqube_zip
+    - name: Unzip SonarQube and create symbolic link
+      block:
+        - unarchive:
+            src: "/tmp/sonarqube-{{ sonarqube_version }}-linux.zip"
+            dest: /opt
+            remote_src: yes
+            creates: "/opt/sonarqube-{{ sonarqube_version }}"
+        - file:
+            src: "/opt/sonarqube-{{ sonarqube_version }}"
+            dest: /opt/sonarqube
+            state: link
 
-    - fail_when: not sonarqube_zip.stat.exists
-      msg: "SonarQube ZIP file not found in /tmp/. Please download it and place it there."
+    - name: Create SonarQube user and set directory ownership
+      block:
+        - user:
+            name: sonarqube
+            system: yes
+            create_home: no
+            shell: /bin/false
+        - file:
+            path: /opt/sonarqube
+            owner: sonarqube
+            group: sonarqube
+            recurse: yes
 
-    - name: Move and extract SonarQube
-      unarchive:
-        src: /tmp/sonarqube-*.zip
-        dest: /opt
-        remote_src: yes
-        creates: /opt/sonarqube
-
-    - name: Create symbolic link for SonarQube directory
-      file:
-        src: "{{ lookup('pipe', 'ls -d /opt/sonarqube-*') }}"
-        dest: /opt/sonarqube
-        state: link
-
-    - name: Create SonarQube user and set ownership
-      user:
-        name: sonarqube
-        system: yes
-        create_home: no
-        shell: /bin/false
-      file: # Ownership change is now within the same task
-        path: /opt/sonarqube
-        owner: sonarqube
-        group: sonarqube
-        recurse: yes
-
-    - name: Configure SonarQube
-      blockinfile: # Using blockinfile for cleaner multi-line configuration
+    - name: Configure SonarQube (sonar.properties)
+      blockinfile:
         path: /opt/sonarqube/conf/sonar.properties
         create: yes
         block: |
@@ -70,8 +67,8 @@
           sonar.jdbc.password={{ sonarqube_password }}
           sonar.jdbc.url=jdbc:postgresql://localhost/sonar
 
-    - name: Create systemd service file
-      blockinfile: # Using blockinfile for cleaner multi-line configuration
+    - name: Create systemd service file (sonarqube.service)
+      blockinfile:
         path: /etc/systemd/system/sonarqube.service
         create: yes
         block: |
@@ -92,30 +89,33 @@
           [Install]
           WantedBy=multi-user.target
 
-    - name: Reload systemd daemon, start and enable SonarQube
+    - name: Reload systemd, start SonarQube, and enable on boot
       systemd:
         daemon_reload: yes
         name: sonarqube
         state: started
         enabled: yes
 
-    - name: Set file descriptor and virtual memory limits
+    - name: Set file descriptor and nproc limits
       blockinfile:
         path: /etc/security/limits.conf
         create: yes
         block: |
           sonarqube - nofile 65536
           sonarqube - nproc 4096
+
+    - name: Set virtual memory limit
       sysctl:
         name: vm.max_map_count
         value: 262144
         state: present
 
-    - name: Allow firewall traffic on port 9000 and enable UFW
-      ufw:
-        rule: allow
-        port: 9000
-      command: ufw enable # Enable UFW in the same task
+    - name: Allow firewall traffic and enable UFW
+      block:
+        - ufw:
+            rule: allow
+            port: 9000
+        - command: ufw enable
 
     - name: Print SonarQube access information
       debug:
