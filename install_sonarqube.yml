@@ -1,122 +1,139 @@
 ---
-- hosts: all
+- hosts: localhost
   become: true
   vars:
-    sonarqube_password: your_strong_password  # **REPLACE WITH A STRONG PASSWORD!**
-    sonarqube_version: 9.9.0.59072 # Example version - update as needed
-    sonarqube_zip_url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-{{ sonarqube_version }}-linux.zip"  # Update URL
+    sonarqube_password: "StrongPassword123"  # 🔹 Replace with your actual password
+    sonarqube_version: "10.2.1.28906"  # 🔹 Replace with the correct SonarQube version
+    sonarqube_zip_url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-{{ sonarqube_version }}.zip"
+    db_name: "sonarqube"
+    db_user: "sonar"
 
   tasks:
     - name: Update package lists
-      apt: update_cache=yes
+      apt:
+        update_cache: yes
 
-    - name: Install Java and PostgreSQL
-      apt: name="{{ item }}" state=present
-      loop:
-        - openjdk-17-jdk  # Or your required Java version
-        - postgresql
-        - postgresql-contrib
+    - name: Install required packages
+      apt:
+        name:
+          - openjdk-17-jdk  # SonarQube requires Java 17
+          - unzip
+          - wget
+          - curl
+          - postgresql
+          - postgresql-contrib
+        state: present
+
+    - name: Ensure PostgreSQL is running
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
 
     - name: Create PostgreSQL user and database for SonarQube
-      block: # Use a block for related tasks
-        - postgresql_user:
-            user: sonar
+      become_user: postgres
+      block:
+        - name: Create SonarQube user
+          postgresql_user:
+            name: "{{ db_user }}"
             password: "{{ sonarqube_password }}"
-            privileges: ALL
-        - postgresql_db:
-            name: sonar
-            owner: sonar
+            role_attr_flags: CREATEDB,NOSUPERUSER
 
-    - name: Download SonarQube ZIP
+        - name: Create SonarQube database
+          postgresql_db:
+            name: "{{ db_name }}"
+            owner: "{{ db_user }}"
+
+    - name: Download SonarQube
       get_url:
         url: "{{ sonarqube_zip_url }}"
-        dest: /tmp/
-        checksum: "sha256:your_checksum_here" # **REPLACE WITH THE ACTUAL CHECKSUM!**
+        dest: "/tmp/sonarqube.zip"
 
-    - name: Unzip SonarQube and create symbolic link
-      block:
-        - unarchive:
-            src: "/tmp/sonarqube-{{ sonarqube_version }}-linux.zip"
-            dest: /opt
-            remote_src: yes
-            creates: "/opt/sonarqube-{{ sonarqube_version }}"
-        - file:
-            src: "/opt/sonarqube-{{ sonarqube_version }}"
-            dest: /opt/sonarqube
-            state: link
+    - name: Extract SonarQube
+      unarchive:
+        src: "/tmp/sonarqube.zip"
+        dest: /opt/
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+      notify: Restart SonarQube
 
-    - name: Create SonarQube user and set directory ownership
-      block:
-        - user:
-            name: sonarqube
-            system: yes
-            create_home: no
-            shell: /bin/false
-        - file:
-            path: /opt/sonarqube
-            owner: sonarqube
-            group: sonarqube
-            recurse: yes
+    - name: Create SonarQube user
+      user:
+        name: sonarqube
+        system: yes
+        create_home: no
+        shell: /bin/false
+
+    - name: Set ownership and permissions for SonarQube
+      file:
+        path: /opt/sonarqube
+        owner: sonarqube
+        group: sonarqube
+        recurse: yes
 
     - name: Configure SonarQube (sonar.properties)
       blockinfile:
         path: /opt/sonarqube/conf/sonar.properties
         create: yes
         block: |
-          sonar.jdbc.username=sonar
+          sonar.jdbc.username={{ db_user }}
           sonar.jdbc.password={{ sonarqube_password }}
-          sonar.jdbc.url=jdbc:postgresql://localhost/sonar
+          sonar.jdbc.url=jdbc:postgresql://localhost/{{ db_name }}
 
-    - name: Create systemd service file (sonarqube.service)
-      blockinfile:
-        path: /etc/systemd/system/sonarqube.service
-        create: yes
-        block: |
+    - name: Create systemd service file for SonarQube
+      copy:
+        dest: /etc/systemd/system/sonarqube.service
+        content: |
           [Unit]
           Description=SonarQube service
-          After=syslog.target network.target
+          After=network.target postgresql.service
 
           [Service]
-          Type=forking
-          ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
-          ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
+          Type=simple
           User=sonarqube
           Group=sonarqube
+          ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
+          ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
           Restart=always
           LimitNOFILE=65536
-          LimitNPROC=4096
 
           [Install]
           WantedBy=multi-user.target
+      notify: Restart SonarQube
 
-    - name: Reload systemd, start SonarQube, and enable on boot
+    - name: Reload systemd and enable SonarQube
       systemd:
         daemon_reload: yes
         name: sonarqube
-        state: started
         enabled: yes
+        state: started
 
-    - name: Set file descriptor and nproc limits
-      blockinfile:
+    - name: Set file descriptor limits for SonarQube
+      lineinfile:
         path: /etc/security/limits.conf
-        create: yes
-        block: |
-          sonarqube - nofile 65536
-          sonarqube - nproc 4096
+        line: "{{ item }}"
+      loop:
+        - "sonarqube - nofile 65536"
+        - "sonarqube - nproc 4096"
 
-    - name: Set virtual memory limit
+    - name: Increase virtual memory limit for SonarQube
       sysctl:
         name: vm.max_map_count
         value: 262144
         state: present
 
-    - name: Allow firewall traffic and enable UFW
-      block:
-        - ufw:
-            rule: allow
-            port: 9000
-        - command: ufw enable
+    - name: Allow traffic on port 9000 (SonarQube)
+      ufw:
+        rule: allow
+        port: 9000
+        proto: tcp
 
     - name: Print SonarQube access information
       debug:
-        msg: "SonarQube installation complete. Access it at http://{{ ansible_host }}:9000"
+        msg: "🎉 SonarQube is installed! Access it at http://{{ ansible_host | default('localhost') }}:9000"
+
+  handlers:
+    - name: Restart SonarQube
+      systemd:
+        name: sonarqube
+        state: restarted
