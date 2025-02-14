@@ -7,6 +7,7 @@
     sonarqube_zip_url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-{{ sonarqube_version }}.zip"
     db_name: "sonarqube"
     db_user: "sonar"
+    sonarqube_home: "/opt/sonarqube"
 
   tasks:
     - name: Update package lists
@@ -20,6 +21,9 @@
           - unzip
           - wget
           - curl
+          - tar
+          - zip
+          - net-tools
           - postgresql
           - postgresql-contrib
         state: present
@@ -30,19 +34,18 @@
         state: started
         enabled: yes
 
-    - name: Create PostgreSQL user and database for SonarQube
+    - name: Create SonarQube PostgreSQL user
       become_user: postgres
-      block:
-        - name: Create SonarQube user
-          postgresql_user:
-            name: "{{ db_user }}"
-            password: "{{ sonarqube_password }}"
-            role_attr_flags: CREATEDB,NOSUPERUSER
+      postgresql_user:
+        name: "{{ db_user }}"
+        password: "{{ sonarqube_password }}"
+        role_attr_flags: CREATEDB,NOSUPERUSER
 
-        - name: Create SonarQube database
-          postgresql_db:
-            name: "{{ db_name }}"
-            owner: "{{ db_user }}"
+    - name: Create SonarQube database
+      become_user: postgres
+      postgresql_db:
+        name: "{{ db_name }}"
+        owner: "{{ db_user }}"
 
     - name: Download SonarQube
       get_url:
@@ -66,14 +69,14 @@
 
     - name: Set ownership and permissions for SonarQube
       file:
-        path: /opt/sonarqube
+        path: "{{ sonarqube_home }}"
         owner: sonarqube
         group: sonarqube
         recurse: yes
 
     - name: Configure SonarQube (sonar.properties)
       blockinfile:
-        path: /opt/sonarqube/conf/sonar.properties
+        path: "{{ sonarqube_home }}/conf/sonar.properties"
         create: yes
         block: |
           sonar.jdbc.username={{ db_user }}
@@ -92,8 +95,8 @@
           Type=simple
           User=sonarqube
           Group=sonarqube
-          ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
-          ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
+          ExecStart={{ sonarqube_home }}/bin/linux-x86-64/sonar.sh start
+          ExecStop={{ sonarqube_home }}/bin/linux-x86-64/sonar.sh stop
           Restart=always
           LimitNOFILE=65536
 
@@ -109,12 +112,12 @@
         state: started
 
     - name: Set file descriptor limits for SonarQube
-      lineinfile:
+      blockinfile:
         path: /etc/security/limits.conf
-        line: "{{ item }}"
-      loop:
-        - "sonarqube - nofile 65536"
-        - "sonarqube - nproc 4096"
+        create: yes
+        block: |
+          sonarqube - nofile 65536
+          sonarqube - nproc 4096
 
     - name: Increase virtual memory limit for SonarQube
       sysctl:
