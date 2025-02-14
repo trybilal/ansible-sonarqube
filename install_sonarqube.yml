@@ -35,14 +35,18 @@
         enabled: yes
 
     - name: Create SonarQube PostgreSQL user
+      become: true
       become_user: postgres
+      become_method: sudo
       postgresql_user:
         name: "{{ db_user }}"
         password: "{{ sonarqube_password }}"
         role_attr_flags: CREATEDB,NOSUPERUSER
 
     - name: Create SonarQube database
+      become: true
       become_user: postgres
+      become_method: sudo
       postgresql_db:
         name: "{{ db_name }}"
         owner: "{{ db_user }}"
