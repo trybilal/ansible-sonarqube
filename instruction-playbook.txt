@@ -1,0 +1,81 @@
+# Installing SonarQube on Ubuntu 24.04 (Ansible Playbook Instructions)
+
+These instructions guide you through installing SonarQube on Ubuntu 24.04 using the provided Ansible playbook.
+
+**Prerequisites:**
+
+1.  **Ubuntu 24.04 Server:** You should have a running Ubuntu 24.04 server.
+2.  **Ansible Installed:** Ansible needs to be installed on the machine from which you'll run the playbook (your control machine).  Install it using:
+
+    ```bash
+    sudo apt update
+    sudo apt install ansible -y
+    ```
+
+3.  **SSH Access and sudo Privileges:** The user running the Ansible playbook must have SSH access to the Ubuntu server and be able to execute commands with `sudo` without being prompted for a password.  This is usually achieved by adding the user to the `sudo` group and configuring sudoers to not require a password for this user.
+
+4.  **SonarQube ZIP File:** You *must* manually download the SonarQube ZIP file from the official SonarQube website ([https://www.sonarqube.org/downloads/](https://www.sonarqube.org/downloads/)).  Do *not* attempt to download it using `wget` or `curl` directly; SonarSource's download system usually blocks this.
+
+**Steps:**
+
+1.  **Create the Ansible Playbook:**
+
+    *   Create a file named `install_sonarqube.yml` (or any name you prefer with the `.yml` extension).
+    *   Copy and paste the Ansible playbook code (provided below) into this file.
+
+2.  **Edit the Playbook:**
+
+    *   **Crucially:** Open `install_sonarqube.yml` in a text editor.
+    *   Find the line `sonarqube_password: your_strong_password`.
+    *   **Replace `your_strong_password` with a strong, unique password.** This password will be used for the SonarQube database user.  Do this *before* running the playbook.
+
+3.  **Create the Inventory File:**
+
+    *   Create a file named `hosts` (or any name you prefer).  This file will contain the IP address or hostname of your Ubuntu server.
+    *   Add the following line to the `hosts` file, replacing `your_server_ip` with the actual IP address or hostname:
+
+        ```
+        your_server_ip
+        ```
+
+        Or, for a more organized inventory:
+
+        ```
+        [sonarqube_servers]
+        your_server_ip
+        ```
+
+4.  **Transfer the SonarQube ZIP File:**
+
+    *   **Before** running the playbook, copy the SonarQube ZIP file you downloaded to the `/tmp/` directory on your Ubuntu server.  Use `scp`, `sftp`, or any other method you prefer.  For example:
+
+        ```bash
+        scp /path/to/downloaded/sonarqube-*.zip your_username@your_server_ip:/tmp/
+        ```
+
+        Replace `/path/to/downloaded/sonarqube-*.zip` with the actual path to the downloaded file on your local machine, `your_username` with your username on the server, and `your_server_ip` with the server's IP address.
+
+5.  **Run the Ansible Playbook:**
+
+    *   From the directory where you saved `install_sonarqube.yml` and `hosts`, run the following command:
+
+        ```bash
+        ansible-playbook -i hosts install_sonarqube.yml
+        ```
+
+        If you used a different inventory file name, adjust the `-i` option accordingly (e.g., `-i my_inventory_file`).
+
+6.  **Verify Installation:**
+
+    *   After the playbook finishes running, you should be able to access SonarQube by opening a web browser and going to: `http://your_server_ip:9000` (replace `your_server_ip` with your server's IP address).
+
+**Troubleshooting:**
+
+*   **Check Ansible Output:** Pay close attention to the output of the `ansible-playbook` command.  Any errors will be displayed there.
+*   **Check Server Logs:** If you encounter issues, check the SonarQube logs on the server at `/opt/sonarqube/logs`.
+*   **Verify Connectivity:** Make sure you can SSH to your server and that the necessary ports (especially 22 for SSH and 9000 for SonarQube) are open in any firewalls.
+
+**Ansible Playbook Code (install_sonarqube.yml):**
+
+```yaml
+# (Paste the Ansible playbook code from the previous response here)
